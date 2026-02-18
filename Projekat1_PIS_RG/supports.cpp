@@ -1,59 +1,57 @@
-#include <GL/freeglut.h>
+#include "utils.h"
 #include <cmath>
 
-struct Node {
-    float x, y;
-};
+Support supports[100];
+int supportCount = 0;
 
-extern Node nodes[100];
-extern int nodeCount;
-
-struct Support {
-    int nodeId;
-    float angle;
-};
-
-static Support supports[100];
-static int supportCount = 0;
-
-float snapAngle(float angle)
-{
-    float step = M_PI / 4.0f;
-    return round(angle / step) * step;
-}
-
-void addSupport(float mx, float my, float angle)
-{
-    int node = -1;
-    const float eps = 0.05f;
-
-    for (int i = 0; i < nodeCount; i++) {
-        float dx = mx - nodes[i].x;
-        float dy = my - nodes[i].y;
-        if (dx * dx + dy * dy < eps * eps)
-            node = i;
+void addOrRotateSupport(int nodeIdx) {
+    // 1. Proveri da li oslonac postoji
+    for (int i = 0; i < supportCount; i++) {
+        if (supports[i].nodeId == nodeIdx) {
+            // Rotiraj za 45 stepeni
+            supports[i].angle += (M_PI / 4.0f);
+            return;
+        }
     }
 
-    if (node == -1)
-        return;
-
-    supports[supportCount].nodeId = node;
-    supports[supportCount].angle = snapAngle(angle);
-    supportCount++;
+    // 2. Dodaj novi
+    if (supportCount < 100) {
+        supports[supportCount].nodeId = nodeIdx;
+        supports[supportCount].angle = 0.0f; // Default gore
+        supports[supportCount].type = 1;     // Nepokretni
+        supportCount++;
+    }
 }
 
-void drawSupports()
-{
-    glColor3f(0.0f, 0.0f, 1.0f);
+void drawSupports() {
+    glColor3f(0.0f, 0.5f, 0.0f); // Zelena boja za oslonce
+    float size = 0.08f;
 
     for (int i = 0; i < supportCount; i++) {
         Node n = nodes[supports[i].nodeId];
-        float s = 0.05f;
 
-        glBegin(GL_TRIANGLES);
-            glVertex2f(n.x, n.y);
-            glVertex2f(n.x - s, n.y - s);
-            glVertex2f(n.x + s, n.y - s);
+        glPushMatrix();
+        glTranslatef(n.x, n.y, 0.0f);
+        glRotatef(supports[i].angle * 180.0f / M_PI, 0.0f, 0.0f, 1.0f);
+
+        // Crtanje trougla
+        glBegin(GL_LINE_LOOP);
+            glVertex2f(0.0f, 0.0f);
+            glVertex2f(-size/2, -size);
+            glVertex2f(size/2, -size);
         glEnd();
+
+        // Crtanje "zemlje" ispod trougla
+        glBegin(GL_LINES);
+            glVertex2f(-size, -size);
+            glVertex2f(size, -size);
+            // Srafura
+            for(float k=-size; k<size; k+=size/3) {
+                glVertex2f(k, -size);
+                glVertex2f(k-0.02f, -size-0.02f);
+            }
+        glEnd();
+
+        glPopMatrix();
     }
 }

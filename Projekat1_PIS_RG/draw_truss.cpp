@@ -1,54 +1,59 @@
 #include "utils.h"
-#include <string>
-#include <cmath>
+#include <iostream>
+#include <iomanip>
 
-// Inicijalizacija globalnih promenljivih
+// --- DEFINICIJA GLOBALNIH PROMENLJIVIH ---
+InteractionMode currentMode = MODE_BUILD;
+
+Node nodes[100];
 int nodeCount = 0;
-int elementCount = 0;
-Element elements[200];
-int selectedNode = -1; // Za praćenje selekcije prvog čvora pri crtanju štapa
 
-// Pomoćna funkcija za ispis ID-jeva i dužina [cite: 22]
+Element elements[200];
+int elementCount = 0;
+
+int selectedNode = -1;
+
+// --- IMPLEMENTACIJA ---
+
 void drawText(float x, float y, std::string text) {
-    glRasterPos2f(x + 0.03f, y + 0.03f);
+    glRasterPos2f(x, y);
     for (char c : text) {
         glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, c);
     }
 }
 
-// Pronalaženje čvora u blizini klika (tolerancija 0.05)
 int findClosestNode(float x, float y) {
     const float threshold = 0.05f;
     for (int i = 0; i < nodeCount; i++) {
         float dx = x - nodes[i].x;
         float dy = y - nodes[i].y;
-        if (sqrt(dx * dx + dy * dy) < threshold) return i;
+        if (sqrtf(dx * dx + dy * dy) < threshold) return i;
     }
     return -1;
 }
 
-// Dodavanje čvora uz "Snap-to-Grid" logiku (mreža 0.1 x 0.1) 
 void addNode(float x, float y) {
     if (nodeCount < 100) {
-        float snappedX = round(x / 0.1f) * 0.1f;
-        float snappedY = round(y / 0.1f) * 0.1f;
+        // Snap to grid (0.1)
+        float snappedX = roundf(x * 10.0f) / 10.0f;
+        float snappedY = roundf(y * 10.0f) / 10.0f;
 
-        if (findClosestNode(snappedX, snappedY) == -1) {
-            nodes[nodeCount].x = snappedX;
-            nodes[nodeCount].y = snappedY;
-            nodeCount++;
-        }
+        // Provera da li cvor vec postoji na tom mestu
+        if (findClosestNode(snappedX, snappedY) != -1) return;
+
+        nodes[nodeCount].x = snappedX;
+        nodes[nodeCount].y = snappedY;
+        nodeCount++;
     }
 }
 
-// Povezivanje dva čvora štapom 
 void addElement(int startIdx, int endIdx) {
     if (elementCount < 200 && startIdx != endIdx) {
-        // Provera da li štap već postoji (sprečavanje duplikata)
-        for (int i = 0; i < elementCount; i++) {
-            if ((elements[i].nodeStart == startIdx && elements[i].nodeEnd == endIdx) ||
-                (elements[i].nodeStart == endIdx && elements[i].nodeEnd == startIdx))
-                return;
+        // Provera duplikata
+        for(int i=0; i<elementCount; i++) {
+            if((elements[i].nodeStart == startIdx && elements[i].nodeEnd == endIdx) ||
+               (elements[i].nodeStart == endIdx && elements[i].nodeEnd == startIdx))
+               return;
         }
         elements[elementCount].nodeStart = startIdx;
         elements[elementCount].nodeEnd = endIdx;
@@ -56,64 +61,98 @@ void addElement(int startIdx, int endIdx) {
     }
 }
 
-// Glavna funkcija za crtanje rešetke [cite: 5, 11]
 void drawTruss() {
-    // 1. CRTANJE ŠTAPOVA
     glLineWidth(2.0f);
+    glColor3f(0.0f, 0.0f, 0.0f); // Crna boja za stapove
+
+    glBegin(GL_LINES);
     for (int i = 0; i < elementCount; i++) {
         Node n1 = nodes[elements[i].nodeStart];
         Node n2 = nodes[elements[i].nodeEnd];
-        float length = sqrt(pow(n2.x - n1.x, 2) + pow(n2.y - n1.y, 2));
+        glVertex2f(n1.x, n1.y);
+        glVertex2f(n2.x, n2.y);
+    }
+    glEnd();
 
-        glColor3f(0.6f, 0.6f, 0.6f); // Siva boja štapova
-        glBegin(GL_LINES);
-            glVertex2f(n1.x, n1.y);
-            glVertex2f(n2.x, n2.y);
-        glEnd();
+    // Crtanje duzina stapova
+    glColor3f(0.3f, 0.3f, 0.3f);
+    for (int i = 0; i < elementCount; i++) {
+        Node n1 = nodes[elements[i].nodeStart];
+        Node n2 = nodes[elements[i].nodeEnd];
+        float midX = (n1.x + n2.x) / 2.0f;
+        float midY = (n1.y + n2.y) / 2.0f;
+        float len = sqrtf(pow(n2.x - n1.x, 2) + pow(n2.y - n1.y, 2));
 
-        // Prikaz dužine štapa [cite: 12]
-        glColor3f(0.0f, 0.4f, 0.0f);
-        drawText((n1.x + n2.x) / 2, (n1.y + n2.y) / 2, std::to_string(length).substr(0, 4));
+        // Formatiranje na 2 decimale
+        std::string lenStr = std::to_string(len);
+        lenStr = lenStr.substr(0, lenStr.find(".") + 3);
+        drawText(midX + 0.01f, midY + 0.01f, lenStr);
     }
 
-    // 2. CRTANJE ČVOROVA (ZGLOBNO SPOJENI) 
-    glPointSize(10.0f);
+    // Crtanje cvorova
+    glPointSize(8.0f);
     glBegin(GL_POINTS);
     for (int i = 0; i < nodeCount; i++) {
-        if (i == selectedNode) glColor3f(1.0f, 0.5f, 0.0f); // Narandžasto ako je selektovan
-        else glColor3f(0.0f, 0.0f, 0.0f); 
+        if (i == selectedNode) glColor3f(1.0f, 0.0f, 0.0f); // Crveno ako je selektovan
+        else glColor3f(0.0f, 0.0f, 1.0f); // Plavo inace
         glVertex2f(nodes[i].x, nodes[i].y);
     }
     glEnd();
 
-    // 3. OZNAKE ČVOROVA (ID)
-    glColor3f(0.0f, 0.0f, 1.0f);
+    // ID cvorova
+    glColor3f(0.0f, 0.0f, 0.5f);
     for (int i = 0; i < nodeCount; i++) {
-        drawText(nodes[i].x, nodes[i].y, "N" + std::to_string(i));
+        drawText(nodes[i].x + 0.02f, nodes[i].y + 0.02f, std::to_string(i+1));
     }
 }
 
-// Obrada unosa mišem [cite: 22]
+// GLAVNA MOUSE FUNKCIJA
 void handleMouse(int button, int state, int x, int y) {
     if (state != GLUT_DOWN) return;
 
-    // Normalizacija koordinata miša na opseg [-1, 1]
-    float mouseX = (float)x / (glutGet(GLUT_WINDOW_WIDTH) / 2.0f) - 1.0f;
-    float mouseY = 1.0f - (float)y / (glutGet(GLUT_WINDOW_HEIGHT) / 2.0f);
+    // Konverzija koordinata
+    int w = glutGet(GLUT_WINDOW_WIDTH);
+    int h = glutGet(GLUT_WINDOW_HEIGHT);
+    float aspect = (float)w / h;
 
-    if (button == GLUT_LEFT_BUTTON) {
-        addNode(mouseX, mouseY); // Levi klik postavlja čvor na mrežu
-    } 
-    else if (button == GLUT_RIGHT_BUTTON) {
-        int clickedNode = findClosestNode(mouseX, mouseY);
-        if (clickedNode != -1) {
-            if (selectedNode == -1) {
-                selectedNode = clickedNode; // Prva selekcija
+    float worldX, worldY;
+
+    if (aspect >= 1.0f) {
+        worldX = ((float)x / w * 2.0f - 1.0f) * aspect;
+        worldY = 1.0f - (float)y / h * 2.0f;
+    } else {
+        worldX = (float)x / w * 2.0f - 1.0f;
+        worldY = (1.0f - (float)y / h * 2.0f) / aspect; // Ispravka za vertikalni aspect
+    }
+
+    int clickedNode = findClosestNode(worldX, worldY);
+
+    if (currentMode == MODE_BUILD) {
+        if (button == GLUT_LEFT_BUTTON) {
+            if (clickedNode == -1) addNode(worldX, worldY);
+        }
+        else if (button == GLUT_RIGHT_BUTTON) {
+            if (clickedNode != -1) {
+                if (selectedNode == -1) selectedNode = clickedNode;
+                else {
+                    addElement(selectedNode, clickedNode);
+                    selectedNode = -1;
+                }
             } else {
-                addElement(selectedNode, clickedNode); // Povezivanje
-                selectedNode = -1; // Reset selekcije
+                selectedNode = -1; // Deselektuj ako kliknes u prazno
             }
         }
     }
+    else if (currentMode == MODE_FORCE) {
+        if (button == GLUT_LEFT_BUTTON && clickedNode != -1) {
+            addOrRotateForce(clickedNode);
+        }
+    }
+    else if (currentMode == MODE_SUPPORT) {
+        if (button == GLUT_LEFT_BUTTON && clickedNode != -1) {
+            addOrRotateSupport(clickedNode);
+        }
+    }
+
     glutPostRedisplay();
 }
