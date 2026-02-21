@@ -1,32 +1,71 @@
 #ifndef UTILS_H
 #define UTILS_H
-#include <GL/freeglut.h>
+
 #include <vector>
-
-void drawGrid();
-
-void addForce(float mx, float my, float angle);
-void drawForces();
-
-void addSupport(float mx, float my, float angle);
-void drawSupports();
+#include <cmath>
+#include <string>
 
 struct Node {
     float x, y;
+};
 
 struct Element {
-    int nodeStart;
-    int nodeEnd;
+    int   n1, n2;
+    float E;   // Pa (unosi se u GPa, konvertuje se)
+    float A;   // m2 (unosi se u cm2, konvertuje se)
+};
 
-extern Node nodes[100];
-extern int nodeCount;
-extern Element elements[200];
-extern int elementCount;
+enum SupportType {
+    FIXED,   // Nepokretni oslonac
+    ROLLER   // Pokretni oslonac
+};
 
-void drawTruss();
-void handleMouse(int button, int state, int x, int y);
-int findClosestNode(float x, float y);
-void addNode(float x, float y);
-void addElement(int startIdx, int endIdx);
+struct Support {
+    int         node;
+    SupportType type;
+    float       angle;  // radijani, visekatnik PI/4
+};
+
+struct Force {
+    int   node;
+    float magnitude; // N
+    float angle;     // radijani, visekatnik PI/4
+};
+
+enum Mode {
+    MODE_DRAW,
+    MODE_FORCE,
+    MODE_SUPPORT,
+    MODE_MATERIAL
+};
+
+struct AppState {
+    std::vector<Node>    nodes;
+    std::vector<Element> elements;
+    std::vector<Support> supports;
+    std::vector<Force>   forces;
+
+    Mode mode = MODE_DRAW;
+
+    // Podrazumevane vrednosti za nove stapove
+    // (azuriraju se nakon svakog terminalnog unosa)
+    float currentE = 210e9f;  // Pa
+    float currentA = 1e-3f;   // m2
+
+    // Oslonac
+    SupportType currentSupportType  = FIXED;
+    float       currentSupportAngle = 0.0f;
+
+    // Ugao poslednje potvrdjene sile (za inicijalni preview)
+    float currentForceAngleDeg = 270.0f;  // podrazumevano nadole
+};
+
+extern AppState app;
+
+float snapToGrid(float v);
+float snapAngle(float angle);
+int   findClosestNode(float x, float y);
+
+void saveToFile();
 
 #endif
