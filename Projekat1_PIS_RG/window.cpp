@@ -4,9 +4,6 @@
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
-#include <thread>
-#include <mutex>
-#include <atomic>
 #include <string>
 
 // ─────────────────────────────────────────────
@@ -21,15 +18,11 @@ static int rmb_firstNode = -1;
 
 // Pending sila (rotacija strelice pre potvrde)
 static int   pendingForceNode     = -1;
-static float pendingForceAngleDeg = 270.0f; // podrazumevano nadole
+static float pendingForceAngleDeg = 270.0f;
 
 // Pending oslonac (rotacija pre potvrde)
 static int   pendingSupNode     = -1;
-static float pendingSupAngleDeg = 270.0f; // podrazumevano nadole
-
-// Sprecava pokretanje vise unosa odjednom
-static std::atomic<bool> waitingForInput(false);
-static std::mutex        appMutex;
+static float pendingSupAngleDeg = 270.0f;
 
 // ─────────────────────────────────────────────
 //  Labele cvorova (A, B, ..., Z, AA, AB, ...)
@@ -45,111 +38,70 @@ static std::string nodeLabel(int i)
 }
 
 // ─────────────────────────────────────────────
-//  Terminalni unos — pokrece se u posebnoj niti
+//  Terminalni unos — blokirajuci (prozor stoji)
 // ─────────────────────────────────────────────
 static void askElementProps(int elemIdx)
 {
-    if (waitingForInput.exchange(true)) return; // vec ceka unos
+    double E_GPa = 210.0, A_cm2 = 10.0;
 
-    std::thread([elemIdx]()
-    {
-        double E_GPa = 210.0, A_cm2 = 10.0;
+    printf("\n  Stap %d  (cvorovi %s-%s)\n",
+           elemIdx + 1,
+           nodeLabel(app.elements[elemIdx].n1).c_str(),
+           nodeLabel(app.elements[elemIdx].n2).c_str());
+    printf("  Unesite modul elasticnosti E [GPa]: ");
+    fflush(stdout);
+    if (scanf("%lf", &E_GPa) != 1) E_GPa = 210.0;
 
-        printf("\n");
-        printf("  ╔══════════════════════════════════════╗\n");
-        printf("  ║   Stap %d  (cvorovi %s–%s)%*s║\n",
-               elemIdx + 1,
-               nodeLabel(app.elements[elemIdx].n1).c_str(),
-               nodeLabel(app.elements[elemIdx].n2).c_str(),
-               (int)(26 - nodeLabel(app.elements[elemIdx].n1).size()
-                        - nodeLabel(app.elements[elemIdx].n2).size()), "");
-        printf("  ╚══════════════════════════════════════╝\n");
-        printf("  Unesite modul elasticnosti E [GPa]: ");
-        fflush(stdout);
-        if (scanf("%lf", &E_GPa) != 1) E_GPa = 210.0;
+    printf("  Unesite povrsinu poprecnog preseka A [cm^2]: ");
+    fflush(stdout);
+    if (scanf("%lf", &A_cm2) != 1) A_cm2 = 10.0;
+    printf("\n");
 
-        printf("  Unesite povrsinu poprecnog preseka A [cm^2]: ");
-        fflush(stdout);
-        if (scanf("%lf", &A_cm2) != 1) A_cm2 = 10.0;
-        printf("\n");
-
-        {
-            std::lock_guard<std::mutex> lock(appMutex);
-            if (elemIdx < (int)app.elements.size()) {
-                app.elements[elemIdx].E = (float)(E_GPa * 1e9);
-                app.elements[elemIdx].A = (float)(A_cm2 * 1e-4);
-            }
-        }
-
-        waitingForInput = false;
-        glutPostRedisplay();
-    }).detach();
+    if (elemIdx < (int)app.elements.size()) {
+        app.elements[elemIdx].E = (float)(E_GPa * 1e9);
+        app.elements[elemIdx].A = (float)(A_cm2 * 1e-4);
+    }
+    glutPostRedisplay();
 }
 
 static void askForceProps(int nodeIdx, float angleDeg)
 {
-    if (waitingForInput.exchange(true)) return;
+    double F = 10000.0;
 
-    std::thread([nodeIdx, angleDeg]()
-    {
-        double F = 10000.0;
+    printf("\n  Sila na cvoru %s\n", nodeLabel(nodeIdx).c_str());
+    printf("  Smer sile: %.0f deg\n", angleDeg);
+    printf("  Unesite intenzitet sile F [N]: ");
+    fflush(stdout);
+    if (scanf("%lf", &F) != 1) F = 10000.0;
+    printf("\n");
 
-        printf("\n");
-        printf("  ╔══════════════════════════════════════╗\n");
-        printf("  ║   Sila na cvoru %-22s║\n", nodeLabel(nodeIdx).c_str());
-        printf("  ╚══════════════════════════════════════╝\n");
-        printf("  Smer sile: %.0f deg\n", angleDeg);
-        printf("  Unesite intenzitet sile F [N]: ");
-        fflush(stdout);
-        if (scanf("%lf", &F) != 1) F = 10000.0;
-        printf("\n");
-
-        {
-            std::lock_guard<std::mutex> lock(appMutex);
-            Force f;
-            f.node      = nodeIdx;
-            f.magnitude = (float)F;
-            f.angle     = angleDeg * (float)M_PI / 180.0f;
-            app.forces.push_back(f);
-        }
-
-        waitingForInput = false;
-        glutPostRedisplay();
-    }).detach();
+    Force f;
+    f.node      = nodeIdx;
+    f.magnitude = (float)F;
+    f.angle     = angleDeg * (float)M_PI / 180.0f;
+    app.forces.push_back(f);
+    glutPostRedisplay();
 }
 
 static void askSupportType(int nodeIdx, float angle)
 {
-    if (waitingForInput.exchange(true)) return;
+    char odgovor[16] = "ne";
 
-    std::thread([nodeIdx, angle]()
-    {
-        char odgovor[16] = "ne";
+    printf("\n  Oslonac na cvoru %s\n", nodeLabel(nodeIdx).c_str());
+    printf("  Da li je oslonac pokretni? (da/ne): ");
+    fflush(stdout);
+    if (scanf("%15s", odgovor) != 1) {}
+    printf("\n");
 
-        printf("\n");
-        printf("  ╔══════════════════════════════════════╗\n");
-        printf("  ║   Oslonac na cvoru %-19s║\n", nodeLabel(nodeIdx).c_str());
-        printf("  ╚══════════════════════════════════════╝\n");
-        printf("  Da li je oslonac pokretni? (da/ne): ");
-        fflush(stdout);
-        if (scanf("%15s", odgovor) != 1) {}
-        printf("\n");
+    SupportType tip = FIXED;
+    if (odgovor[0] == 'd' || odgovor[0] == 'D') tip = ROLLER;
 
-        SupportType tip = FIXED;
-        if (odgovor[0] == 'd' || odgovor[0] == 'D') tip = ROLLER;
-
-        {
-            std::lock_guard<std::mutex> lock(appMutex);
-            Support s;
-            s.node  = nodeIdx;
-            s.type  = tip;
-            s.angle = angle;
-            app.supports.push_back(s);
-        }
-
-        waitingForInput = false;
-        glutPostRedisplay();
-    }).detach();
+    Support s;
+    s.node  = nodeIdx;
+    s.type  = tip;
+    s.angle = angle;
+    app.supports.push_back(s);
+    glutPostRedisplay();
 }
 
 // ─────────────────────────────────────────────
@@ -480,19 +432,6 @@ void drawUI()
             glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
     }
 
-    // Indikator terminalnog unosa — gore desno, crven
-    if (waitingForInput) {
-        const char* hint = ">>> Unesite vrednosti u terminal <<<";
-        int textW = glutBitmapLength(GLUT_BITMAP_HELVETICA_12,
-                                     (const unsigned char*)hint);
-        // Konvertujemo pikselsku sirinu u ortho koordinate
-        float charW = 2.0f * aspect * textW / windowWidth;
-        glColor3f(0.85f, 0.05f, 0.05f);
-        glRasterPos2f(aspect - charW - 0.03f, 0.92f);
-        for (const char* c = hint; *c; c++)
-            glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
-    }
-
     glMatrixMode(GL_PROJECTION);
     glPopMatrix();
     glMatrixMode(GL_MODELVIEW);
@@ -547,9 +486,6 @@ void handleMouse(int button, int state, int sx, int sy)
     if (button == 3) { camZoom *= 1.1f;  glutPostRedisplay(); return; }
     if (button == 4) { camZoom /= 1.1f;  if (camZoom<0.05f) camZoom=0.05f; glutPostRedisplay(); return; }
     if (button != GLUT_LEFT_BUTTON && button != GLUT_RIGHT_BUTTON) return;
-
-    // Blokiraj sve dok je aktivan terminalni unos
-    if (waitingForInput) return;
 
     float wx, wy;
     screenToWorld(sx, sy, wx, wy);
@@ -656,9 +592,6 @@ void handleMouse(int button, int state, int sx, int sy)
 // ─────────────────────────────────────────────
 void keyboard(unsigned char key, int, int)
 {
-    // Blokiraj promenu moda dok terminal ceka unos
-    if (waitingForInput) return;
-
     float panStep = 0.8f / camZoom;
 
     // Promena moda = potvrdi pending silu / oslonac
