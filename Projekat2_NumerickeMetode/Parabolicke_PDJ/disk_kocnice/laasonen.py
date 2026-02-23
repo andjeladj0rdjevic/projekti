@@ -1,6 +1,7 @@
 import numpy as np
 import json
 
+
 class DiskBrakeSimulator:
 
     def __init__(self):
@@ -29,7 +30,6 @@ class DiskBrakeSimulator:
         print(f"  Parametar r = {self.r:.4f}")
 
     def solve_tridiagonal(self, a, b, c, d):
-
         n = len(d)
         c_prime = np.zeros(n)
         d_prime = np.zeros(n)
@@ -51,16 +51,23 @@ class DiskBrakeSimulator:
 
     def build_system_braking(self, T_old, V):
         """
-        Leva granica: Toplotni fluks Q = mr * u * V / (2 * lambda)
-        Desna granica: Konvekcija
+        Leva granica (x=0): Toplotni fluks od trenja
+          Granični uslov iz zadatka: ∂T/∂x = (u*mr)/(2λ) * (2V_i - u*Δτ)
+          Fantom tačka: T_{-1} = T_1 + 2*Δx * (∂T/∂x)|_0
+          Rezultat: (1+2r)*T_0 - 2r*T_1 = T_0^n + 2r*Δx * (∂T/∂x)|_0
+
+        Desna granica (x=L): Konvekcija
+          Granični uslov: -λ ∂T/∂x = α*(T_p - Tv)
+          Biot-ov broj: Bi = α*Δx/λ
+          Rezultat: -2r*T_{N-2} + (1+2r*(1+Bi))*T_{N-1} = T_{N-1}^n + 2r*Bi*Tv
         """
         N = self.N
         r = self.r
 
-        a = np.zeros(N)  # donja dijagonala
-        b = np.zeros(N)  # glavna dijagonala
-        c = np.zeros(N)  # gornja dijagonala
-        d = np.zeros(N)  # desna strana
+        a = np.zeros(N)
+        b = np.zeros(N)
+        c = np.zeros(N)
+        d = np.zeros(N)
 
         # Unutrašnje tačke (i = 1, ..., N-2)
         for i in range(1, N-1):
@@ -70,21 +77,15 @@ class DiskBrakeSimulator:
             d[i] = T_old[i]
 
         # Leva granica (i = 0): Toplotni fluks
-        # Granični uslov: -λ ∂T/∂x = Q
-        # Aproksimacija: -λ(T₁ - T₋₁)/(2Δx) = Q
-        # Fantom tačka: T₋₁ = T₁ + 2ΔxQ/λ
-        # Rezultat: (1+2r)T₀ - 2rT₁ = T₀ⁿ + 2rΔxQ/λ
-        Q = self.mr * self.u * V / (2 * self.lambda_val)
+        # Iz zadatka: ∂T/∂x|_0 = (u*mr)/(2λ) * (2V_i - u*Δτ)
+        grad_T = self.u * self.mr / (2 * self.lambda_val) * (2 * V - self.u * self.dt)
 
         a[0] = 0
         b[0] = 1 + 2*r
         c[0] = -2*r
-        d[0] = T_old[0] + 2*r*self.dx*Q
+        d[0] = T_old[0] + 2*r*self.dx * grad_T
 
         # Desna granica (i = N-1): Konvekcija
-        # Granični uslov: -λ ∂T/∂x = α(Tp - Tv)
-        # Biot-ov broj: Bi = αΔx/λ
-        # Rezultat: -2rT_{N-2} + (1+2r(1+Bi))T_{N-1} = T_{N-1}ⁿ + 2rBiTv
         Bi = self.alpha * self.dx / self.lambda_val
 
         a[N-1] = -2*r
@@ -96,7 +97,7 @@ class DiskBrakeSimulator:
 
     def build_system_cooling(self, T_old):
         """
-        Obe granice: Konvekcija
+        Obe granice: Konvekcija (nakon zaustavljanja)
         """
         N = self.N
         r = self.r
@@ -115,11 +116,13 @@ class DiskBrakeSimulator:
 
         Bi = self.alpha * self.dx / self.lambda_val
 
+        # Leva granica: konvekcija
         a[0] = 0
         b[0] = 1 + 2*r*(1 + Bi)
         c[0] = -2*r
         d[0] = T_old[0] + 2*r*Bi*self.Tv
 
+        # Desna granica: konvekcija
         a[N-1] = -2*r
         b[N-1] = 1 + 2*r*(1 + Bi)
         c[N-1] = 0
@@ -133,30 +136,32 @@ class DiskBrakeSimulator:
         t = 0.0
         braking_distance = 0.0
 
-        # Čuvanje podataka
         time_steps = []
         temp_data = []
         save_counter = 0
 
-        print("\n=== FAZA KOČENJA ===")
+        print("\n=== FAZA KOČENJA (Laasonen) ===")
 
         while V > 0:
             T_old = T.copy()
 
+            # Rešavanje sistema sa trenutnom brzinom V
             a, b, c, d = self.build_system_braking(T_old, V)
-
             T = self.solve_tridiagonal(a, b, c, d)
 
+            # Trag kočenja: koristimo V pre ažuriranja (trapezna formula)
+            V_old = V
             V -= self.u * self.dt
             if V < 0:
                 V = 0
 
-            braking_distance += V * self.dt
+            # Pređeni put u ovom koraku (prosek stare i nove brzine)
+            braking_distance += 0.5 * (V_old + V) * self.dt
 
             t += self.dt
 
             if t >= save_counter * save_interval:
-                time_steps.append(t)
+                time_steps.append(round(t, 6))
                 temp_data.append(T.copy())
                 save_counter += 1
 
@@ -169,26 +174,23 @@ class DiskBrakeSimulator:
         print(f"  Trag kočenja: {braking_distance:.2f} m")
         print(f"  Maksimalna temperatura: {np.max(T):.2f}°C")
 
-        print("\n=== FAZA HLAĐENJA ===")
+        print("\n=== FAZA HLAĐENJA (Laasonen) ===")
 
-        # Faza 2: Hlađenje
         end_time = stop_time + cooling_time
         while t < end_time:
             T_old = T.copy()
 
-            # Obe strane konvekcija
             a, b, c, d = self.build_system_cooling(T_old)
-
             T = self.solve_tridiagonal(a, b, c, d)
 
             t += self.dt
 
             if t >= save_counter * save_interval:
-                time_steps.append(t)
+                time_steps.append(round(t, 6))
                 temp_data.append(T.copy())
                 save_counter += 1
 
-                if (save_counter - int(stop_time/save_interval)) % 10 == 0:
+                if (save_counter - int(stop_time / save_interval)) % 10 == 0:
                     print(f"  t = {t:.2f}s, T_max = {np.max(T):.2f}°C")
 
         print(f"  Finalna maksimalna temperatura: {np.max(T):.2f}°C")
@@ -208,7 +210,8 @@ class DiskBrakeSimulator:
                 'L': self.L,
                 'a': self.a,
                 'V0': self.V0,
-                'u': self.u
+                'u': self.u,
+                'T0': self.T0
             }
         }
 
@@ -216,20 +219,19 @@ class DiskBrakeSimulator:
 
 
 def main():
-    print("="*60)
+    print("=" * 60)
     print("DISK KOČNICE - LAASONEN METODA")
-    print("="*60)
+    print("=" * 60)
 
     sim = DiskBrakeSimulator()
-
     results = sim.simulate(cooling_time=10.0, save_interval=0.1)
 
     with open('results_laasonen.json', 'w') as f:
         json.dump(results, f, indent=2)
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Rezultati sačuvani u: results_laasonen.json")
-    print("="*60)
+    print("=" * 60)
 
 
 if __name__ == "__main__":

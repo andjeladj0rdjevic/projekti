@@ -1,7 +1,22 @@
 import numpy as np
 import json
 
-class DiskBrakeSimulatorADI:
+
+class DiskBrakeSimulatorCN:
+    """
+    Metoda izmenjivih pravaca za 1D problem = Crank-Nicolson šema.
+
+    Za 1D jednačinu provođenja toplote:
+        ∂T/∂τ = a * ∂²T/∂x²
+
+    Crank-Nicolson diskretizacija (vremenski i prostorno 2. reda tačnosti):
+        (T_i^{n+1} - T_i^n)/Δτ = (a/2) * [(T_{i+1}^n - 2T_i^n + T_{i-1}^n)/Δx²
+                                           + (T_{i+1}^{n+1} - 2T_i^{n+1} + T_{i-1}^{n+1})/Δx²]
+
+    Tridiagonalni sistem:
+        -r/2 * T_{i-1}^{n+1} + (1+r) * T_i^{n+1} - r/2 * T_{i+1}^{n+1}
+            = r/2 * T_{i-1}^n + (1-r) * T_i^n + r/2 * T_{i+1}^n
+    """
 
     def __init__(self):
         # Fizički parametri
@@ -19,16 +34,13 @@ class DiskBrakeSimulatorADI:
 
         self.N = int(self.L / self.dx) + 1
         self.dt = (self.dx ** 2) / (2 * self.a)
+        self.r = self.a * self.dt / (self.dx ** 2)
 
-        self.dt_half = self.dt / 2
-        self.r_half = self.a * self.dt_half / (self.dx ** 2)
-
-        print(f"Inicijalizacija ADI metode:")
+        print(f"Inicijalizacija Crank-Nicolson (metoda izmenjivih pravaca) metode:")
         print(f"  Broj tačaka: N = {self.N}")
         print(f"  Prostorni korak: Δx = {self.dx*100:.2f} cm")
-        print(f"  Puni vremenski korak: Δt = {self.dt*1000:.4f} ms")
-        print(f"  Polu-korak: Δt/2 = {self.dt_half*1000:.4f} ms")
-        print(f"  Parametar r' = {self.r_half:.4f}")
+        print(f"  Vremenski korak: Δt = {self.dt*1000:.4f} ms")
+        print(f"  Parametar r = {self.r:.4f} (CN uvek stabilan)")
 
     def solve_tridiagonal(self, a, b, c, d):
         n = len(d)
@@ -51,83 +63,102 @@ class DiskBrakeSimulatorADI:
         return x
 
     def build_system_braking(self, T_old, V):
+        """
+        Crank-Nicolson sistem tokom faze kočenja.
+
+        LEVA GRANICA (x=0): Toplotni fluks od trenja
+          Iz zadatka: ∂T/∂x|_0 = (u*mr)/(2λ) * (2V_i - u*Δτ)
+          Fantom tačka (staro i novo vreme): T_{-1} = T_1 + 2*Δx * grad_T
+          CN na i=0:
+            (1+r)*T_0^{n+1} - r*T_1^{n+1} = (1-r)*T_0^n + r*T_1^n + 2*r*Δx*grad_T
+
+        DESNA GRANICA (x=L): Konvekcija
+          Bi = α*Δx/λ
+          Fantom tačka: T_N = T_{N-2} - 2*Bi*(T_{N-1} - Tv)
+          CN na i=N-1:
+            -r*T_{N-2}^{n+1} + (1+r*(1+Bi))*T_{N-1}^{n+1}
+                = r*T_{N-2}^n + (1-r*(1+Bi))*T_{N-1}^n + 2*r*Bi*Tv
+        """
         N = self.N
-        r = self.r_half
+        r = self.r
 
         a = np.zeros(N)
         b = np.zeros(N)
         c = np.zeros(N)
         d = np.zeros(N)
 
+        # Unutrašnje tačke (CN)
         for i in range(1, N-1):
-            a[i] = -r
-            b[i] = 1 + 2*r
-            c[i] = -r
-            d[i] = T_old[i]
+            a[i] = -r / 2
+            b[i] = 1 + r
+            c[i] = -r / 2
+            d[i] = r/2 * T_old[i-1] + (1-r) * T_old[i] + r/2 * T_old[i+1]
 
-        Q = self.mr * self.u * V / (2 * self.lambda_val)
+        # Leva granica (i=0): toplotni fluks
+        # Ispravna formula iz zadatka: ∂T/∂x = (u*mr)/(2λ) * (2V_i - u*Δτ)
+        grad_T = self.u * self.mr / (2 * self.lambda_val) * (2 * V - self.u * self.dt)
 
+        # CN sa ghost tačkom T_{-1}^{n} = T_1^{n} + 2*Δx*grad_T (isto za n+1):
+        #   T_0^{n+1} - T_0^n = r * [T_1^n - T_0^n + dx*grad_T + T_1^{n+1} - T_0^{n+1} + dx*grad_T]
         a[0] = 0
-        b[0] = 1 + 2*r
-        c[0] = -2*r
-        d[0] = T_old[0] + 2*r*self.dx*Q
+        b[0] = 1 + r
+        c[0] = -r
+        d[0] = (1 - r) * T_old[0] + r * T_old[1] + 2 * r * self.dx * grad_T
 
+        # Desna granica (i=N-1): konvekcija
         Bi = self.alpha * self.dx / self.lambda_val
 
-        a[N-1] = -2*r
-        b[N-1] = 1 + 2*r*(1 + Bi)
+        # CN sa ghost tačkom T_N = T_{N-2} - 2*Bi*(T_{N-1} - Tv):
+        a[N-1] = -r
+        b[N-1] = 1 + r * (1 + Bi)
         c[N-1] = 0
-        d[N-1] = T_old[N-1] + 2*r*Bi*self.Tv
+        d[N-1] = r * T_old[N-2] + (1 - r * (1 + Bi)) * T_old[N-1] + 2 * r * Bi * self.Tv
 
         return a, b, c, d
 
     def build_system_cooling(self, T_old):
+        """
+        Crank-Nicolson sistem tokom faze hlađenja.
+
+        OBE GRANICE: Konvekcija
+          Bi = α*Δx/λ
+          CN na i=0:
+            (1+r*(1+Bi))*T_0^{n+1} - r*T_1^{n+1}
+                = (1-r*(1+Bi))*T_0^n + r*T_1^n + 2*r*Bi*Tv
+          CN na i=N-1: (simetrično)
+            -r*T_{N-2}^{n+1} + (1+r*(1+Bi))*T_{N-1}^{n+1}
+                = r*T_{N-2}^n + (1-r*(1+Bi))*T_{N-1}^n + 2*r*Bi*Tv
+        """
         N = self.N
-        r = self.r_half
+        r = self.r
 
         a = np.zeros(N)
         b = np.zeros(N)
         c = np.zeros(N)
         d = np.zeros(N)
 
+        # Unutrašnje tačke (CN)
         for i in range(1, N-1):
-            a[i] = -r
-            b[i] = 1 + 2*r
-            c[i] = -r
-            d[i] = T_old[i]
+            a[i] = -r / 2
+            b[i] = 1 + r
+            c[i] = -r / 2
+            d[i] = r/2 * T_old[i-1] + (1-r) * T_old[i] + r/2 * T_old[i+1]
 
         Bi = self.alpha * self.dx / self.lambda_val
 
-        # Leva granica: Konvekcija
+        # Leva granica: konvekcija
         a[0] = 0
-        b[0] = 1 + 2*r*(1 + Bi)
-        c[0] = -2*r
-        d[0] = T_old[0] + 2*r*Bi*self.Tv
+        b[0] = 1 + r * (1 + Bi)
+        c[0] = -r
+        d[0] = (1 - r * (1 + Bi)) * T_old[0] + r * T_old[1] + 2 * r * Bi * self.Tv
 
-        a[N-1] = -2*r
-        b[N-1] = 1 + 2*r*(1 + Bi)
+        # Desna granica: konvekcija
+        a[N-1] = -r
+        b[N-1] = 1 + r * (1 + Bi)
         c[N-1] = 0
-        d[N-1] = T_old[N-1] + 2*r*Bi*self.Tv
+        d[N-1] = r * T_old[N-2] + (1 - r * (1 + Bi)) * T_old[N-1] + 2 * r * Bi * self.Tv
 
         return a, b, c, d
-
-    def adi_step_braking(self, T, V):
-        a1, b1, c1, d1 = self.build_system_braking(T, V)
-        T_half = self.solve_tridiagonal(a1, b1, c1, d1)
-
-        a2, b2, c2, d2 = self.build_system_braking(T_half, V)
-        T_new = self.solve_tridiagonal(a2, b2, c2, d2)
-
-        return T_new
-
-    def adi_step_cooling(self, T):
-        a1, b1, c1, d1 = self.build_system_cooling(T)
-        T_half = self.solve_tridiagonal(a1, b1, c1, d1)
-
-        a2, b2, c2, d2 = self.build_system_cooling(T_half)
-        T_new = self.solve_tridiagonal(a2, b2, c2, d2)
-
-        return T_new
 
     def simulate(self, cooling_time=10.0, save_interval=0.1):
         T = np.full(self.N, self.T0)
@@ -139,21 +170,25 @@ class DiskBrakeSimulatorADI:
         temp_data = []
         save_counter = 0
 
-        print("\n=== FAZA KOČENJA (ADI) ===")
+        print("\n=== FAZA KOČENJA (Crank-Nicolson) ===")
 
         while V > 0:
-            T = self.adi_step_braking(T, V)
+            T_old = T.copy()
 
+            a, b, c, d = self.build_system_braking(T_old, V)
+            T = self.solve_tridiagonal(a, b, c, d)
+
+            # Trag kočenja: trapezna formula (V pre i posle ažuriranja)
+            V_old = V
             V -= self.u * self.dt
             if V < 0:
                 V = 0
 
-            braking_distance += V * self.dt
-
+            braking_distance += 0.5 * (V_old + V) * self.dt
             t += self.dt
 
             if t >= save_counter * save_interval:
-                time_steps.append(t)
+                time_steps.append(round(t, 6))
                 temp_data.append(T.copy())
                 save_counter += 1
 
@@ -166,25 +201,29 @@ class DiskBrakeSimulatorADI:
         print(f"  Trag kočenja: {braking_distance:.2f} m")
         print(f"  Maksimalna temperatura: {np.max(T):.2f}°C")
 
-        print("\n=== FAZA HLAĐENJA (ADI) ===")
+        print("\n=== FAZA HLAĐENJA (Crank-Nicolson) ===")
 
         end_time = stop_time + cooling_time
         while t < end_time:
-            T = self.adi_step_cooling(T)
+            T_old = T.copy()
+
+            a, b, c, d = self.build_system_cooling(T_old)
+            T = self.solve_tridiagonal(a, b, c, d)
 
             t += self.dt
 
             if t >= save_counter * save_interval:
-                time_steps.append(t)
+                time_steps.append(round(t, 6))
                 temp_data.append(T.copy())
                 save_counter += 1
 
-                if (save_counter - int(stop_time/save_interval)) % 10 == 0:
+                if (save_counter - int(stop_time / save_interval)) % 10 == 0:
                     print(f"  t = {t:.2f}s, T_max = {np.max(T):.2f}°C")
 
         print(f"  Finalna maksimalna temperatura: {np.max(T):.2f}°C")
+
         results = {
-            'method': 'ADI',
+            'method': 'Crank-Nicolson (ADI)',
             'time_steps': time_steps,
             'temp_data': [T_i.tolist() for T_i in temp_data],
             'stop_time': stop_time,
@@ -195,11 +234,11 @@ class DiskBrakeSimulatorADI:
                 'N': self.N,
                 'dx': self.dx,
                 'dt': self.dt,
-                'dt_half': self.dt_half,
                 'L': self.L,
                 'a': self.a,
                 'V0': self.V0,
-                'u': self.u
+                'u': self.u,
+                'T0': self.T0
             }
         }
 
@@ -207,23 +246,19 @@ class DiskBrakeSimulatorADI:
 
 
 def main():
-    print("="*60)
-    print("DISK KOČNICE - ADI METODA")
-    print("="*60)
+    print("=" * 60)
+    print("DISK KOČNICE - CRANK-NICOLSON (METODA IZMENJIVIH PRAVACA)")
+    print("=" * 60)
 
-    # Kreiranje simulatora
-    sim = DiskBrakeSimulatorADI()
-
-    # Pokretanje simulacije
+    sim = DiskBrakeSimulatorCN()
     results = sim.simulate(cooling_time=10.0, save_interval=0.1)
 
-    # Čuvanje rezultata
     with open('results_adi.json', 'w') as f:
         json.dump(results, f, indent=2)
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Rezultati sačuvani u: results_adi.json")
-    print("="*60)
+    print("=" * 60)
 
 
 if __name__ == "__main__":
