@@ -221,9 +221,8 @@ X, Y = np.meshgrid(x, y)
 
 plt.figure()
 plt.contourf(X, Y, w_gs.T, 20)
-plt.colorbar(label="Ugib w")
+plt.colorbar(label=r"$w$ [m]")
 plt.title("Raspodela ugiba ploče")
-plt.xlabel("x")
-plt.ylabel("y")
+plt.xlabel(r"$x$ [m]")
+plt.ylabel(r"$y$ [m]")
 plt.show()
-
