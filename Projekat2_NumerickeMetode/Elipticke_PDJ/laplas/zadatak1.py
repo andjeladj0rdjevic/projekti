@@ -19,16 +19,17 @@ max_iter = 10000
 
 def apply_boundary_conditions(psi):
 
-    # Donji zid
-    psi[:, 0] = 0
+     # LEVI ZID
+    psi[0, :] = np.linspace(100, 0, ny)
 
-    # Gornji zid
-    psi[:, -1] = 100
+    # GORNJI ZID
+    psi[:, -1] = 0
 
-    # Levi zid
-    psi[0, :] = np.linspace(0, 100, ny)
+    # DONJI ZID
+    psi[0, 0] = 0      # zid
+    psi[1:, 0] = 100   # zid posle proreza
 
-    # Desni zid (dψ/dx = 0)
+    # DESNI ZID (dψ/dx = 0)
     psi[-1, :] = psi[-2, :]
 
     return psi
@@ -145,7 +146,7 @@ for val in initial_values:
 
 plt.figure()
 plt.plot(initial_values, iterations_initial, marker='o')
-plt.xlabel("Početna vrednost psi")
+plt.xlabel("Početna vrednost ψ [m²/s]")
 plt.ylabel("Broj iteracija")
 plt.title("Uticaj početnog rešenja")
 plt.grid()
@@ -165,7 +166,7 @@ X, Y = np.meshgrid(x, y)
 
 plt.figure()
 plt.contourf(X, Y, psi_final.T, 20)
-plt.colorbar(label="Psi")
+plt.colorbar(label="ψ [m²/s]")
 plt.title("Strujne linije - GS")
 plt.xlabel("x")
 plt.ylabel("y")
@@ -181,9 +182,8 @@ psi_adi, _ = adi_method(psi0)
 
 plt.figure()
 plt.contourf(X, Y, psi_adi.T, 20)
-plt.colorbar(label="Psi")
+plt.colorbar(label="ψ [m²/s]")
 plt.title("Strujne linije - ADI")
 plt.xlabel("x")
 plt.ylabel("y")
 plt.show()
-
